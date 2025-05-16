@@ -54,15 +54,19 @@ class AES128:
 
         self.round_keys = self.keyschedule(key)
 
-    def encrypt(self, pt_bytes, n_rounds=10):
+    def encrypt(self, pt_bytes, iv=None, n_rounds=10):
         read_pt = np.frombuffer(pt_bytes, dtype=np.uint8)
         pt_full = np.copy(read_pt)
         pt_split = [pt_full[i:i+16] for i in range(0, len(pt_full), 16) ]
 
         out = []
 
-        # TODO pad last block...
-        assert(len(pt_full) % 16 == 0)
+        # assert(len(pt_full) % 16 == 0)
+        last = pt_split[len(pt_split)-1]
+        if len(last) < 16:
+            pad = np.array([16- len(last)] * (16-len(last)))
+            pt_split[len(pt_split) - 1] = np.concatenate([last, pad])
+
 
         match self.mode:
             case 'ECB':
@@ -70,18 +74,36 @@ class AES128:
                     out.append(self.forward_block(block, n_rounds))
 
             case 'CBC':
-                pass
-            case 'CTR':
-                pass
+                assert(iv is not None)
+                iv = np.copy(np.frombuffer(iv, dtype=np.uint8))
+                prev = iv
+                for i in range(len(pt_split)):
+                    assert (len(prev) == 16)
+                    enc = self.forward_block(prev ^ pt_split[i], n_rounds)
+                    out.append(enc)
+                    prev = out[i]
 
-        return np.array(out).flatten().tobytes()
+
+
+            case 'CTR':
+                assert(iv is not None)
+                iv = np.copy(np.frombuffer(iv, dtype=np.uint8))
+                for c, block in enumerate(pt_split):
+                    counter = np.zeros((16,), dtype=np.uint8)
+                    counter[15] = c
+                    enc = self.forward_block(iv ^ counter, n_rounds)
+                    print(enc.dtype)
+                    out.append(enc ^ block)
+
+        print(np.array(out).shape)
+        return np.array(out, dtype=np.uint8).flatten().tobytes()
 
 
 
 
     def forward_block(self, block, n_rounds):
         assert (len(block) == 16)  # single block
-        data = np.copy(block).reshape(4, 4).T
+        data = np.copy(block).reshape(4, 4).T.astype(np.uint8)
         data ^= self.round_keys[0]
 
         for i, k in zip(range(n_rounds), self.round_keys[1:]):
