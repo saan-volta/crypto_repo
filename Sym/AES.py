@@ -76,6 +76,13 @@ class AES128:
             [0x03, 0x01, 0x01, 0x02]
         ], dtype=np.uint8)
 
+        self.inv_mix_mat = np.array([
+            [0x0e, 0x0b, 0x0d, 0x09],
+            [0x09, 0x0e, 0x0b, 0x0d],
+            [0x0d, 0x09, 0x0e, 0x0b],
+            [0x0b, 0x0d, 0x09, 0x0e]
+        ], dtype=np.uint8)
+
         self.round_keys = self.keyschedule(key)
 
     def encrypt(self, pt_bytes, iv=None, n_rounds=10):
@@ -119,18 +126,34 @@ class AES128:
                     print(enc.dtype)
                     out.append(enc ^ block)
 
-        print(np.array(out).shape)
+        # print(np.array(out, dtype=np.uint8).flatten())
         return np.array(out, dtype=np.uint8).flatten().tobytes()
 
 
+    def decrypt(self, pt, iv=None, n_rounds=10, rk_ixs=None):
+        read_pt = np.frombuffer(pt, dtype=np.uint8)
+        pt_full = np.copy(read_pt)
+        pt_split = [pt_full[i:i + 16] for i in range(0, len(pt_full), 16)]
+
+        out = []
+
+        assert(len(pt_full) % 16 == 0)
+
+        match self.mode:
+            case 'ECB':
+                for block in pt_split:
+                    out.append(self.backward_block(block, n_rounds, rk_ixs))
+
+        return np.array(out, dtype=np.uint8).flatten().tobytes()
 
 
     def forward_block(self, block, n_rounds):
         assert (len(block) == 16)  # single block
         data = np.copy(block).reshape(4, 4).T.astype(np.uint8)
         data ^= self.round_keys[0]
+        # print(f'E InitRK \n {np.vectorize(hex)(data)} \n ---')
 
-        for i, k in zip(range(n_rounds), self.round_keys[1:]):
+        for i, k in zip(range(n_rounds), self.round_keys[1:n_rounds+1]):
             # 1. bytesub
             for r in range(4):
                 for c in range(4):
@@ -139,28 +162,65 @@ class AES128:
                     nib2 = b & 0b1111
                     data[r, c] = self.sbox[nib1, nib2]
 
-            #             print(f'BYTESUB\n {np.vectorize(hex)(data)} \n ---')
+            # print(f'E/{i} ByteSub \n {np.vectorize(hex)(data)} \n ---')
 
             # 2. shiftrows
             for r in range(4):
                 data[r] = self.rot_vector(data[r], r)
 
-            #             print(f'SHIFTROWS\n {np.vectorize(hex)(data)} \n ---')
-
+            # print(f'E/{i} ShiftRows \n {np.vectorize(hex)(data)} \n ---')
             # 3. mix columns
-            if i < 10 - 1:
+            if i < n_rounds - 1:
                 for c in range(4):
                     data[:, c] = field_mat_vec_mult(self.mix_mat, data[:, c])
 
+            # print(f'E/{i} MixCols \n {np.vectorize(hex)(data)} \n ---')
+
             # 4. add roundkey
             data ^= k
+            # print(f'E/{i} AddRK \n {np.vectorize(hex)(data)} \n ---')
 
         return data.T.flatten()
 
 
     # decryption
-    def backward_block(self, block, n_rounds):
-        pass
+    def backward_block(self, block, n_rounds, rk_ixs):
+        assert (len(block) == 16)  # single block
+        data = np.copy(block).reshape(4, 4).T.astype(np.uint8)
+
+        # for i, k in zip(range(n_rounds), reversed(self.round_keys[1:n_rounds+1])):
+        for i, k in zip(range(n_rounds), [self.round_keys[q] for q in rk_ixs]):
+            # 1. inv addroundkey
+            data ^= k
+
+            # print(f'D/{i} invAddRK \n {np.vectorize(hex)(data)} \n ---')
+
+            # 2. inv mixcolumns
+            if i > 0:
+                for c in range(4):
+                    data[:, c] = field_mat_vec_mult(self.inv_mix_mat, data[:, c])
+
+            # print(f'D/{i} invMixCol \n {np.vectorize(hex)(data)} \n ---')
+
+            # 3. inv shiftrows
+            for r in range(4):
+                data[r] = self.rot_vector(data[r], -1*r)
+
+            # print(f'D/{i} invShiftRows \n {np.vectorize(hex)(data)} \n ---')
+
+            # 4. inv bytesub
+            for r in range(4):
+                for c in range(4):
+                    b = data[r, c]
+                    nib1 = b >> 4
+                    nib2 = b & 0b1111
+                    data[r, c] = self.inv_sbox[nib1, nib2]
+
+            # print(f'D/{i} invByteSub \n {np.vectorize(hex)(data)} \n ---')
+
+        data ^= self.round_keys[0]
+        # print(f'D/ invInitRK \n {np.vectorize(hex)(data)} \n ---')
+        return data.T.flatten()
 
 
     # input: key as 16 bytes
