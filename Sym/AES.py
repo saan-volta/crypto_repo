@@ -130,7 +130,7 @@ class AES128:
         return np.array(out, dtype=np.uint8).flatten().tobytes()
 
 
-    def decrypt(self, pt, iv=None, n_rounds=10, rk_ixs=None):
+    def decrypt(self, pt, iv=None, n_rounds=10):
         read_pt = np.frombuffer(pt, dtype=np.uint8)
         pt_full = np.copy(read_pt)
         pt_split = [pt_full[i:i + 16] for i in range(0, len(pt_full), 16)]
@@ -142,7 +142,7 @@ class AES128:
         match self.mode:
             case 'ECB':
                 for block in pt_split:
-                    out.append(self.backward_block(block, n_rounds, rk_ixs))
+                    out.append(self.backward_block(block, n_rounds))
 
         return np.array(out, dtype=np.uint8).flatten().tobytes()
 
@@ -184,12 +184,11 @@ class AES128:
 
 
     # decryption
-    def backward_block(self, block, n_rounds, rk_ixs):
+    def backward_block(self, block, n_rounds):
         assert (len(block) == 16)  # single block
         data = np.copy(block).reshape(4, 4).T.astype(np.uint8)
 
-        # for i, k in zip(range(n_rounds), reversed(self.round_keys[1:n_rounds+1])):
-        for i, k in zip(range(n_rounds), [self.round_keys[q] for q in rk_ixs]):
+        for i, k in zip(range(n_rounds), reversed(self.round_keys[1:n_rounds+1])):
             # 1. inv addroundkey
             data ^= k
 
